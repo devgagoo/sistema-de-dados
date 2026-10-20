@@ -59,7 +59,7 @@ local function decidirLock(antigo, meuJobId, agora)
 end
 
 
-local function TomarSessao(player) 
+function Dados:TomarSessao(player) 
     local chavelock = chaveLock(player)
 
     local resultado
@@ -149,11 +149,14 @@ local function desistirCarregamento(player: Player, motivo)
     player:Kick(motivo)
 end
 
+
+
+
 function Dados:Carregar(player: Player)
 
     
     
-    if not TomarSessao(player) then
+    if not self:TomarSessao(player) then
         desistirCarregamento(player, "Não consegui carregar seus dados agora. Tente de novo em alguns segundos")
         return
     end
@@ -177,40 +180,45 @@ function Dados:Carregar(player: Player)
 end
 
 
-function Dados:Salvar(player: Player)
+
+function Dados:SalvarPerfil(player, banco)
+    banco = banco or DataStore
+
     local perfil = self:Get(player)
+    if not perfil then return false end 
 
-    -- Protecao importante: quem nao conseguiu carregar nao tem perfil aqui, e salvar sem
-    -- perfil ia sobrescrever os dados de verdade do jogador com nada. Melhor nao salvar.
-    if not perfil then
-        SoltarSessao(player)
-        return
-    end
-
-    -- So 3 tentativas = ~3s. O jogador ja saiu e o servidor pode estar fechando: na saida,
-    -- segurar quem esta indo embora e' pior do que salvar mal.
-    -- UpdateAsync cai no mesmo balde de orcamento da escrita ("SetIncrementAsync").
+   
+      
+    -- So 3 tentativas = ~3s. Quem chama pode ser a saida do jogador (o servidor pode estar
+    -- fechando) ou o autosave de 5 em 5 minutos: segurar e' pior do que salvar mal.
+    -- UpdateAsync em vez de SetAsync: o SetAsync escreve por cima as cegas, e dois servidores
+    -- salvando o mesmo jogador se atropelavam. Aqui o Roblox entrega o que esta no banco pra
+    -- nossa funcao e grava o que ela devolver.
+    -- Se a funcao devolver nil, o UpdateAsync CANCELA o save: nao da erro, nao apaga, nao cria
+    -- nada, e o Try acha que deu certo. Por isso a transformar nunca devolve nil.
+    -- O {player.UserId} do SetAsync nao cabe aqui (o UpdateAsync nao aceita): ele marcava os
+    -- dados como do jogador, pra ele pedir pra apagar (GDPR). Decisao: aceito perder essa marca,
+    -- porque a seguranca contra varios servidores escrevendo vale mais.
+    -- O "banco" e' um parametro pra poder trocar por um banco de mentira no teste; sem ele,
+    -- usa o DataStore de verdade.
     local ok, erro = Try(3, Enum.DataStoreRequestType.SetIncrementAsync, function()
-        -- UpdateAsync em vez de SetAsync: o SetAsync escreve por cima as cegas, e dois
-        -- servidores salvando o mesmo jogador se atropelavam. Aqui o Roblox entrega o que
-        -- esta no banco pra nossa funcao e grava o que ela devolver.
-        -- Se a funcao devolver nil, o UpdateAsync CANCELA o save: nao da erro, nao apaga,
-        -- nao cria nada, e o Try acha que deu certo. Por isso a transformar nunca devolve nil.
-        -- O {player.UserId} do SetAsync nao cabe aqui (o UpdateAsync nao aceita): ele marcava
-        -- os dados como do jogador, pra ele pedir pra apagar (GDPR). Decisao: aceito perder
-        -- essa marca, porque a seguranca contra varios servidores escrevendo vale mais.
-        DataStore:UpdateAsync(chaveDe(player), transformar(perfil))
+        banco:UpdateAsync(chaveDe(player), transformar(perfil))
     end)
 
     if not ok then
-        warn("Falhou ao salvar os dados de", player.Name, erro)
-    else
-        print("Salvou os dados de", player.Name)   -- print de debug, pode tirar depois
+        warn("Salvamento de perfil falhou", erro)
     end
+    
+   return ok
+    
 
-    SoltarSessao(player)
 
-    self._perfis[player] = nil   -- libera a memoria: esse perfil nao mora mais aqui
+end
+
+function Dados:Salvar(player: Player)
+  self:SalvarPerfil(player)
+  SoltarSessao(player)
+  self._perfis[player] = nil
 end
 
 return Dados
